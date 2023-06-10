@@ -136,7 +136,59 @@ static Long gets2( char *, int );
 
 Long Getenv_common(const char *name_p, char *buf_p);
 
-#if defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
+#ifdef USE_ICONV
+static iconv_t _sjis_ic = (iconv_t)-1;
+static char *sjis2utf8(const char *s)
+{
+    static char utf8_buf[8192];
+    if (_sjis_ic == (iconv_t)-1) 
+	_sjis_ic = iconv_open("UTF-8", "Shift_JIS");
+    if (_sjis_ic == (iconv_t)-1)
+	abort();
+    size_t inbytes = strlen(s);
+    size_t outbytes = sizeof(utf8_buf) - 1;
+    char *ptr_in = s;
+    char *ptr_out = utf8_buf;
+    iconv(_sjis_ic, &ptr_in, &inbytes, &ptr_out, &outbytes);
+    
+    utf8_buf[sizeof(utf8_buf) - 1 - outbytes] = '\0';
+    return utf8_buf;
+}
+#endif
+
+#if defined(__APPLE__) || defined(unix) || defined(__linux__) || defined(__EMSCRIPTEN__)
+static char *fix_dospath(const char *name_p)
+{
+    static unsigned char path[1024];
+    const unsigned char *src = (const unsigned char *)name_p;
+    unsigned char *dst = path;
+#ifdef USE_ICONV
+    src = (unsigned char *)sjis2utf8(name_p);
+#endif
+    while (*src != '\0') {
+	if (*src == ':') {
+	    dst = path;
+	}
+	else if (*src == '\\') {
+	    *dst++ = '/';
+	}
+	else if (*src == 0xc2 && src[1] == 0xa5/*yen*/) {
+	    *dst++ = '/';
+	    src++;
+	}
+	else {
+	    *dst++ = *src;
+	}
+	src++;
+    }
+    *dst = '\0';
+    return (char *)path;
+}
+#else
+#define		fix_dospath(name_p)	(name_p)
+#endif
+
+#if defined(__APPLE__) || defined(unix) || defined(__linux__) || defined(__EMSCRIPTEN__)
 void CloseHandle( FILE* fp ) {
 	fclose( fp );
 }
@@ -368,25 +420,12 @@ int dos_call( UChar code )
 #elif defined(DOSX)
 		_dos_write( fileno(finfo[ 1 ].fh), data_ptr,
 					(unsigned)len, &drv );
-#elif defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
+#elif defined(__APPLE__) || defined(unix) || defined(__EMSCRIPTEN__)
 //		_dos_write( fileno(finfo[ 1 ].fh), data_ptr, (unsigned)len, &drv );
 #if defined (USE_ICONV)
-	{
-		// SJIS to UTF-8
-		char utf8_buf[8192];
-		iconv_t icd = iconv_open("UTF-8", "Shift_JIS");
-		size_t inbytes = strlen(data_ptr);
-		size_t outbytes = sizeof(utf8_buf) - 1;
-		char *ptr_in = data_ptr;
-		char *ptr_out = utf8_buf;
-		memset(utf8_buf, 0x00, sizeof(utf8_buf));
-		iconv(icd, &ptr_in, &inbytes, &ptr_out, &outbytes);
-		iconv_close(icd);
-
-		printf("%s", utf8_buf);
-	}
+		printf("%s", sjis2utf8(data_ptr));
 #else
-	printf("%s", data_ptr);
+		printf("%s", data_ptr);
 #endif
 #else
 		printf("DOSCALL:PRINT not implemented yet.\n");
@@ -624,23 +663,9 @@ int dos_call( UChar code )
 		rd[0] = len;
 #else
 
-#if defined (USE_ICONV)
-			char utf8_buf[8192];
-			if (( finfo [ fhdl ].fh == stdout ) ||  ( finfo [ fhdl ].fh == stderr )) {
-				// SJIS to UTF-8
-				iconv_t icd = iconv_open("UTF-8", "Shift_JIS");
-				size_t inbytes  = strlen(data_ptr);
-				size_t outbytes = sizeof(utf8_buf) - 1;
-				char *ptr_in = data_ptr;
-				char *ptr_out = utf8_buf;
-				memset(utf8_buf, 0x00, sizeof(utf8_buf));
-				iconv(icd, &ptr_in, &inbytes, &ptr_out, &outbytes);
-				iconv_close(icd);
-
-				data_ptr = utf8_buf;
-			}
-#endif	// USE_ICONV
-
+#ifdef USE_ICONV
+		data_ptr = sjis2utf8(data_ptr);
+#endif
 		if ( fprintf( finfo [ fhdl ].fh, "%s", data_ptr ) == -1 ) {
 		  rd [ 0 ] = 0;
 		 } else {
@@ -1572,22 +1597,7 @@ static Long Create( char *p, short atr )
 	Long i;
 	int    len;
 	
-	
-#if defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-	char* name = p;
-	int namelen = strlen(name);
-	for (int i=0;i<namelen;++i) {
-		if ( name[i] == '\\' ) {
-			name[i] = '/';
-		}
-		if ( name[i] == ':' ) {
-			p = &name[i+1];
-		}
-	}
-//	printf("Create(\"%s\", %d) = %s\n", name, atr, p);
-#endif
-
-
+	p = fix_dospath(p);
 	ret = 0;
 	for ( i = 5; i < FILE_MAX; i++ ) {
 		if ( finfo [ i ].fh == NULL ) {
@@ -1657,7 +1667,9 @@ static Long Newfile( char *p, short atr )
 	len = strlen( p );
 	for( i = len - 1; i >= 0 && p [ i ] == ' '; i-- )
 	  p [ i ] = '\0';
+	p = fix_dospath(p);
 
+#if 0
 	/* ファイル名のチェック */
 	if ( (len=strlen( p )) > 88 )
 	  return( -13 );    /* ファイル名の指定誤り */
@@ -1669,6 +1681,7 @@ static Long Newfile( char *p, short atr )
 		if ( strlen( &(p [ i ]) ) > 4 )
 		  return( -13 );
 	}
+#endif
 #if defined(WIN32)
 	/*
 	 * 「X68000環境ハンドブック」によると、ファイルが存在する場合でも
@@ -1719,20 +1732,7 @@ static Long Open( char *p, short mode )
 	Long ret;
 	Long i;
 
-#if defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-	char* name = p;
-	int namelen = strlen(name);
-	for (int i=0;i<namelen;++i) {
-		if ( name[i] == '\\' ) {
-			name[i] = '/';
-		}
-		if ( name[i] == ':' ) {
-			p = &name[i+1];
-		}
-	}
-//	printf("Open(\"%s\", %d) = %s\n", name, mode, p);
-#endif
-
+	p = fix_dospath(p);
 	switch( mode ) {
 	  case 0: /* 読み込みオープン */
 #if defined(WIN32)
@@ -1985,15 +1985,10 @@ static Long Write( short hdl, Long buf, Long len )
 	}
 	if (finfo [ hdl ].fh == stdout)
 	  fflush( stdout );
-#elif defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-	write_len = fwrite( write_buf, 1, len, finfo [ hdl ].fh );
-	if (finfo [ hdl ].fh == stdout)
-	  fflush( stdout );
 #else
 	write_len = fwrite( write_buf, 1, len, finfo [ hdl ].fh );
 	if (finfo [ hdl ].fh == stdout)
 	  fflush( stdout );
-//	#error NOTIMPLEMENTED
 #endif
 
 	return( write_len );
@@ -2011,6 +2006,7 @@ static Long Delete( char *p )
 	int    i;
 
 	errno = 0;
+	p = fix_dospath(p);
 	if ( remove( p ) != 0 ) {
 		/* オープン中のファイルを調べる */
 		err_save = errno;
@@ -2101,11 +2097,12 @@ static Long Seek( short hdl, Long offset, short mode )
  */
 static Long Rename( Long old, Long new1 )
 {
-	char    *old_ptr;
+	char    old_ptr[8192];
 	char    *new_ptr;
 
-	old_ptr = prog_ptr + old;
-	new_ptr = prog_ptr + new1;
+	strncpy(old_ptr, fix_dospath(prog_ptr + old), sizeof(old_ptr));
+	old_ptr[sizeof(old_ptr) - 1] = '\0';
+	new_ptr = fix_dospath(prog_ptr + new1);
 	errno = 0;
 	if (rename( old_ptr, new_ptr ) != 0 ) {
 		if ( errno == EACCES )
@@ -2126,7 +2123,7 @@ static Long Chmod( Long adr, short atr )
 	char    *name_ptr;
 	ULong ret;
 
-	name_ptr = prog_ptr + adr;
+	name_ptr = fix_dospath(prog_ptr + adr);
 	if ( atr == -1 ) {
 		/* 読み出し */
 #if defined(WIN32)
@@ -2162,7 +2159,7 @@ static Long Mkdir( Long name )
 {
 	char    *name_ptr;
 
-	name_ptr = prog_ptr + name;
+	name_ptr = fix_dospath(prog_ptr + name);
 	if (CreateDirectoryA(name_ptr, NULL) == FALSE) {
 		if ( errno == EACCES )
 			return( -20 );    /* ディレクトリは既に存在する */
@@ -2179,7 +2176,7 @@ static Long Rmdir( Long name )
 {
 	char    *name_ptr;
 
-	name_ptr = prog_ptr + name;
+	name_ptr = fix_dospath(prog_ptr + name);
 	errno = 0;
 	if (RemoveDirectoryA(name_ptr) == FALSE) {
 		if ( errno == EACCES )
@@ -2197,7 +2194,7 @@ static Long Chdir( Long name )
 {
 	char    *name_ptr;
 
-	name_ptr = prog_ptr + name;
+	name_ptr = fix_dospath(prog_ptr + name);
 	if (SetCurrentDirectory(name_ptr) == FALSE )
 		return( -3 );        /* ディレクトリが見つからない */
 	return( 0 );
@@ -2362,7 +2359,7 @@ static Long Files( Long buf, Long name, short atr )
 #else
 	char        *name_ptr;
 	char        *buf_ptr;
-	name_ptr = prog_ptr + name;
+	name_ptr = fix_dospath(prog_ptr + name);
 	buf_ptr  = prog_ptr + buf;
 	
 	{
@@ -2412,7 +2409,6 @@ static Long Files( Long buf, Long name, short atr )
 	char *path = name_ptr;
 	DIR *dir;
 	struct dirent *dent;
-
 
 	
 	dir = opendir(path);
@@ -2552,9 +2548,6 @@ static Long Nfiles( Long buf )
 	/* PACKEDNAMEをセット */
 	strncpy(&buf_ptr[30], f_data.cFileName, 22);
 	buf_ptr[30+22] = 0;
-
-#elif defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
-	printf("DOSCALL NFILES:not defined yet %s %d\n", __FILE__, __LINE__ );
 #else
 	printf("DOSCALL NFILES:not defined yet %s %d\n", __FILE__, __LINE__ );
 #endif
@@ -2567,7 +2560,7 @@ static Long Nfiles( Long buf )
  */
 static Long Filedate( short hdl, Long dt )
 {
-#if defined(__APPLE__) || defined(__linux__) || defined(__EMSCRIPTEN__)
+#if defined(__APPLE__) || defined(unix) || defined(__linux__) || defined(__EMSCRIPTEN__)
 	printf("DOSCALL FILEDATE:not defined yet %s %d\n", __FILE__, __LINE__ );
 #else
 #if defined(WIN32)
@@ -2807,7 +2800,8 @@ Long Getenv_common(const char *name_p, char *buf_p)
 			ename[i] = *(mem_ptr ++);
 		}
 		ename[i] = '\0';
-		if (_stricmp(name_p, ename) == 0) {
+		//if (_stricmp(name_p, ename) == 0) {
+		if (strcmp(name_p, ename) == 0) {
 			/* 環境変数が見つかった。*/
 			while (*mem_ptr == '=' || *mem_ptr == ' ') {
 				mem_ptr ++;
@@ -2847,7 +2841,7 @@ static Long Namests( Long name, Long buf )
 	int      len;
 	int      i;
 
-	name_ptr = prog_ptr + name;
+	name_ptr = fix_dospath(prog_ptr + name);
 	buf_ptr  = prog_ptr + buf;
 	memset( buf_ptr, 0x00, 88 );
 	if ( (len=strlen( name_ptr )) > 88 )
@@ -2964,7 +2958,7 @@ static Long Nameck( Long name, Long buf )
 	int     len;
 	int     i;
 
-	name_ptr = prog_ptr + name;
+	name_ptr = fix_dospath(prog_ptr + name);
 	buf_ptr  = prog_ptr + buf;
 	memset( buf_ptr, 0x00, 91 );
 	if ( (len=strlen( name_ptr )) > 88 )
@@ -3379,7 +3373,7 @@ static Long Exec01( Long nm, Long cmd, Long env, int md )
 
 	loadmode = ((nm >> 24) & 0x03);
 	nm &= 0xFFFFFF;
-	name_ptr = prog_ptr + nm;
+	name_ptr = fix_dospath(prog_ptr + nm);
 	if ( strlen( name_ptr ) > 88 )
 		return( -13 );        /* ファイル名指定誤り */
 
@@ -3417,7 +3411,7 @@ static Long Exec01( Long nm, Long cmd, Long env, int md )
 	nest_sp [ nest_cnt ] = ra [ 7 ];
 	ra [ 0 ] = mem - MB_SIZE;
 	ra [ 1 ] = mem - MB_SIZE + PSP_SIZE + prog_size;
-	ra [ 2 ] = cmd;
+	ra [ 2 ] = fix_dospath(cmd);
 	if ( env == 0 )
 		ra [ 3 ] = mem_get( psp [ nest_cnt ] + 0x10, S_LONG );
 	else
@@ -3447,13 +3441,14 @@ static Long Exec01( Long nm, Long cmd, Long env, int md )
 static Long Exec2( Long nm, Long cmd, Long env )
 {
 	FILE *fp;
-	char *name_ptr;
+	char name_ptr[8192];
 	char *cmd_ptr;
 	char *p;
 	int  len;
 
-	name_ptr = prog_ptr + nm;
-	cmd_ptr  = prog_ptr + cmd;
+	strncpy(name_ptr, fix_dospath(prog_ptr + nm), sizeof(name_ptr));
+	name_ptr[sizeof(name_ptr)-1] = '\0';
+	cmd_ptr  = fix_dospath(prog_ptr + cmd);
 	p = name_ptr;
 	while( *p != '\0' && *p != ' ' )
 		p ++;
@@ -3483,7 +3478,11 @@ static Long Exec2( Long nm, Long cmd, Long env )
 static Long Exec3( Long nm, Long adr1, Long adr2 )
 {
 	FILE *fp;
+#if 0
 	char fname [ 89 ];
+#else
+	char *fname;
+#endif
 	char *name_ptr;
 	int  loadmode;
 	Long ret;
@@ -3494,11 +3493,15 @@ static Long Exec3( Long nm, Long adr1, Long adr2 )
 	nm   &= 0xFFFFFF;
 	adr1 &= 0xFFFFFF;
 	adr2 &= 0xFFFFFF;
-	name_ptr = prog_ptr + nm;
+	name_ptr = fix_dospath(prog_ptr + nm);
+#if 0
 	if ( strlen( name_ptr ) > 88 )
 		return( -13 );        /* ファイル名指定誤り */
 
 	strcpy( fname, name_ptr );
+#else
+	fname = name_ptr;
+#endif
 	if ( (fp=prog_open( fname, FALSE )) == NULL )
 		return( -2 );
 
