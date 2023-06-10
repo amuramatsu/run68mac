@@ -92,8 +92,16 @@ void	read_ini(char *path, char *prog)
         &p          // address of pointer to file component 
     );
 #else
-    snprintf(path, MAX_PATH, "%s", buf);
+    p = strrchr(path, '/');
+    if (p != NULL) {
+	*(p+1) = '\0';
+    }
+    strncat(path, buf, MAX_PATH - strlen(path) - 1);
+    path[MAX_PATH-1] = '\0';
 #endif
+    if (getenv("RUN68_INI")) {
+	path = getenv("RUN68_INI");
+    }
 #if defined(_DEBUG)
     printf("INI:%s\n", path);
 #endif
