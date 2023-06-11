@@ -94,13 +94,13 @@ void	read_ini(char *path, char *prog)
 #else
     p = strrchr(path, '/');
     if (p != NULL) {
-	*(p+1) = '\0';
+		*(p+1) = '\0';
     }
     strncat(path, buf, MAX_PATH - strlen(path) - 1);
     path[MAX_PATH-1] = '\0';
 #endif
     if (getenv("RUN68_INI")) {
-	path = getenv("RUN68_INI");
+		path = getenv("RUN68_INI");
     }
 #if defined(_DEBUG)
     printf("INI:%s\n", path);
@@ -174,20 +174,14 @@ void	readenv_from_ini(char *path)
 {
 	char	buf [ 1024 ];
 	FILE	*fp;
-	int	len;
+	int		len;
 	char	*mem_ptr;       /* メモリ管理ブロック */
 	char	*read_ptr;
 	int     env_len = 0;    /* 環境の長さ */
     BOOL    env_flag;
 
 	/* INIファイルの名前(パス含む)を得る */
-	strcpy( buf, path );
-	if ( (len=strlen( buf )) < 4 )
-		return;
-	buf [ len - 3 ] = 'i';
-	buf [ len - 2 ] = 'n';
-	buf [ len - 1 ] = 'i';
-	if ( (fp=fopen( buf, "r" )) == NULL )
+	if ( (fp=fopen( path, "r" )) == NULL )
 		return;
 
     /* 環境変数はiniファイルに記述する。*/
@@ -195,7 +189,6 @@ void	readenv_from_ini(char *path)
    	mem_set( ra [ 3 ] + 4, 0, S_BYTE );
 	/* 内容を調べる */
 	while( fgets( buf, 1023, fp ) != NULL ) {
-		_strlwr( buf );
 		chomp(buf);
 
 		/* セクションを見る */
@@ -203,6 +196,9 @@ void	readenv_from_ini(char *path)
             env_flag = FALSE;
             if ( strcmp( buf, "[environment]" ) == 0 ) {
 				env_flag = TRUE;
+			}
+			else {
+				env_flag = FALSE;
 			}
 			continue;
 		}
@@ -216,7 +212,6 @@ void	readenv_from_ini(char *path)
                 mem_ptr = prog_ptr + ra [ 3 ] + 4 + env_len;
 		        strcpy( mem_ptr, buf);
 			    if ( ini_info.env_lower == TRUE ) {
-                    strcpy( buf, buf);
 		            _strlwr(buf);
                     read_ptr = buf;
         			while( *mem_ptr != '\0' && *mem_ptr != '=' )

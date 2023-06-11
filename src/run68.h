@@ -146,7 +146,7 @@ typedef	uint32_t	ULong ;			// 64bit 環境対応
 #define	PSP_SIZE	MB_SIZE + 240
 #define	PROG_TOP	(STACK_TOP + STACK_SIZE + PSP_SIZE)
 #define	NEST_MAX	20
-#define	FILE_MAX	20
+#define	FILE_MAX	50
 
 #define	RAS_INTERVAL	10000	/* ラスタ割り込みの間隔 */
 

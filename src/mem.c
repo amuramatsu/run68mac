@@ -97,7 +97,7 @@ Long mem_get( Long adr, char size )
 {
 	UChar   *mem;
 	Long	d;
-
+	adr &=  0x00FFFFFF;
 	if ( adr < ENV_TOP || adr >= mem_aloc ) {
 		if ( mem_red_chk( adr ) == FALSE )
 			return( 0 );
